@@ -2,16 +2,22 @@ import { useSession, signIn, signOut } from "next-auth/react";
 import { useState, useEffect, useRef } from "react";
 
 const TABS = ["Overview", "Email", "Tasks", "Finance", "Chat"];
-
 const CU_EMAILS = ["nathan.bish@colorado.edu", "nabi2561@colorado.edu"];
 const MOVEMENT_EMAIL = "nathan.bish@movementgyms.com";
-const OUTLOOK_DOMAINS = ["colorado.edu", "movementgyms.com"];
+
+const DEFAULT_SIGNATURE_LINES = [
+  { id: 1, text: "Nathan Bish", enabled: true },
+  { id: 2, text: "CUSG Deputy Chief of Staff", enabled: true },
+  { id: 3, text: "President, Triangle Fraternity", enabled: true },
+  { id: 4, text: "University of Colorado Boulder", enabled: false },
+  { id: 5, text: "nathanbish1@gmail.com", enabled: false },
+];
 
 const isJunk = (email) => {
   const from = (email.from || "").toLowerCase();
   const subject = (email.subject || "").toLowerCase();
-  const junkSenders = ["noreply", "no-reply", "donotreply", "notifications@", "newsletter", "mailer", "marketing", "promotions", "unsubscribe", "digest", "alerts@", "support@", "info@", "hello@"];
-  const junkSubjects = ["unsubscribe", "newsletter", "digest", "% off", "limited time", "act now", "verify your email", "confirm your", "your receipt", "your order", "invoice #", "payment confirmation", "account statement"];
+  const junkSenders = ["noreply", "no-reply", "donotreply", "notifications@", "newsletter", "mailer", "marketing", "promotions", "unsubscribe", "digest", "alerts@"];
+  const junkSubjects = ["unsubscribe", "newsletter", "digest", "% off", "limited time", "act now", "verify your email", "your receipt", "your order", "invoice #", "payment confirmation"];
   return junkSenders.some(j => from.includes(j)) || junkSubjects.some(j => subject.includes(j));
 };
 
@@ -26,13 +32,12 @@ const getOutlookAddresses = (email) => {
 export default function Home() {
   const { data: session, status } = useSession();
   const [tab, setTab] = useState("Overview");
+  const [showSettings, setShowSettings] = useState(false);
   const [emails, setEmails] = useState([]);
   const [emailLoading, setEmailLoading] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState(null);
   const [summary, setSummary] = useState("");
   const [summaryLoading, setSummaryLoading] = useState(false);
-  const [replyInstructions, setReplyInstructions] = useState("");
-  const [draft, setDraft] = useState("");
   const [tasks, setTasks] = useState([]);
   const [replyQueue, setReplyQueue] = useState([]);
   const [newTask, setNewTask] = useState("");
@@ -49,15 +54,18 @@ export default function Home() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [selectedReply, setSelectedReply] = useState(null);
-  const [replyText, setReplyText] = useState("");
-  const [replySending, setReplySending] = useState(false);
+  const [replyIntent, setReplyIntent] = useState("");
+  const [draftPreview, setDraftPreview] = useState(null);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [sendLoading, setSendLoading] = useState(false);
+  const [signatureLines, setSignatureLines] = useState(DEFAULT_SIGNATURE_LINES);
+  const [newSigLine, setNewSigLine] = useState("");
+  const [replyInstructions, setReplyInstructions] = useState("");
+  const [draft, setDraft] = useState("");
   const chatEndRef = useRef(null);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
-
-  useEffect(() => {
-    if (session) loadEmails();
-  }, [session]);
+  useEffect(() => { if (session) loadEmails(); }, [session]);
 
   if (status === "loading") return <Screen><p style={{ color: "#888", textAlign: "center", marginTop: 80 }}>Loading...</p></Screen>;
   if (!session) return (
@@ -71,6 +79,12 @@ export default function Home() {
       </div>
     </Screen>
   );
+
+  const buildSignature = (lines) => {
+    const enabled = lines.filter(l => l.enabled).map(l => l.text);
+    if (!enabled.length) return "";
+    return "\n\n" + enabled.join("\n");
+  };
 
   const loadEmails = async () => {
     setEmailLoading(true);
@@ -87,10 +101,8 @@ export default function Home() {
   const autoScan = async (emailList) => {
     setScanning(true);
     try {
-      // Scan for deadlines/tasks
       const res = await fetch("/api/email/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emails: emailList.slice(0, 15) })
       });
       const data = await res.json();
@@ -98,16 +110,12 @@ export default function Home() {
         id: Date.now() + i, text: d.title, category: "Email", priority: "high", done: false, date: d.date
       }));
       if (newTasks.length > 0) setTasks(t => [...newTasks, ...t.filter(x => x.category !== "Email")]);
-
-      // Identify emails needing reply
       const needsReply = emailList.filter(e => {
-        const from = (e.from || "").toLowerCase();
-        const subject = (e.subject || "").toLowerCase();
-        const snippet = (e.snippet || "").toLowerCase();
         if (isJunk(e)) return false;
-        const replySignals = ["can you", "could you", "please", "let me know", "thoughts?", "feedback", "review", "confirm", "available", "when can", "follow up", "following up", "response needed", "action required", "rsvp", "your input", "your thoughts"];
-        const questionSignals = ["?"];
-        return replySignals.some(s => snippet.includes(s) || subject.includes(s)) || questionSignals.some(s => snippet.includes(s));
+        const snippet = (e.snippet || "").toLowerCase();
+        const subject = (e.subject || "").toLowerCase();
+        const signals = ["can you", "could you", "please", "let me know", "thoughts?", "feedback", "review", "confirm", "available", "when can", "follow up", "response needed", "action required", "rsvp", "your input", "?"];
+        return signals.some(s => snippet.includes(s) || subject.includes(s));
       }).slice(0, 10);
       setReplyQueue(needsReply);
     } catch (e) { console.error(e); }
@@ -126,8 +134,7 @@ export default function Home() {
     try {
       const emailsToDelete = emails.filter(e => toDelete.includes(e.id));
       await fetch("/api/email/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emailIds: toDelete, emails: emailsToDelete })
       });
       setEmails(e => e.filter(x => !toDelete.includes(x.id)));
@@ -138,31 +145,52 @@ export default function Home() {
     setDeleteLoading(false);
   };
 
-  const handleReplyAction = async (action) => {
-    if (!selectedReply) return;
-    setReplySending(true);
+  const generateDraft = async () => {
+    if (!replyIntent.trim()) return;
+    setDraftLoading(true);
     try {
-      if (action === "send" && replyText.trim()) {
-        await fetch("/api/email/reply", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: selectedReply, instructions: replyText, autoSend: true })
-        });
-      } else if (action === "delete") {
+      const res = await fetch("/api/email/reply", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: selectedReply, instructions: replyIntent })
+      });
+      const data = await res.json();
+      setDraftPreview({ body: data.draft, sigLines: signatureLines.map(l => ({ ...l })) });
+    } catch (e) { alert("Draft failed: " + e.message); }
+    setDraftLoading(false);
+  };
+
+  const sendDraft = async () => {
+    if (!draftPreview) return;
+    setSendLoading(true);
+    try {
+      const sig = buildSignature(draftPreview.sigLines);
+      const fullBody = draftPreview.body + sig;
+      await fetch("/api/email/reply", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: selectedReply, send: true, draftBody: fullBody })
+      });
+      setReplyQueue(q => q.filter(x => x.id !== selectedReply.id));
+      setSelectedReply(null);
+      setReplyIntent("");
+      setDraftPreview(null);
+    } catch (e) { alert("Send failed: " + e.message); }
+    setSendLoading(false);
+  };
+
+  const handleReplyAction = async (action) => {
+    try {
+      if (action === "delete") {
         await fetch("/api/email/delete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ emailIds: [selectedReply.id], emails: [selectedReply] })
         });
         setEmails(e => e.filter(x => x.id !== selectedReply.id));
-      } else if (action === "sent_from_outlook") {
-        // Just remove from queue, already handled externally
       }
       setReplyQueue(q => q.filter(x => x.id !== selectedReply.id));
       setSelectedReply(null);
-      setReplyText("");
+      setReplyIntent("");
+      setDraftPreview(null);
     } catch (e) { alert("Action failed: " + e.message); }
-    setReplySending(false);
   };
 
   const summarize = async (email) => {
@@ -175,7 +203,7 @@ export default function Home() {
     setSummaryLoading(false);
   };
 
-  const draftReply = async () => {
+  const draftEmailReply = async () => {
     if (!replyInstructions.trim()) return;
     setSummaryLoading(true);
     try {
@@ -186,10 +214,11 @@ export default function Home() {
     setSummaryLoading(false);
   };
 
-  const sendReply = async () => {
+  const sendEmailReply = async () => {
     if (!draft.trim()) return;
     try {
-      await fetch("/api/email/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: selectedEmail, send: true, draftBody: draft }) });
+      const sig = buildSignature(signatureLines);
+      await fetch("/api/email/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: selectedEmail, send: true, draftBody: draft + sig }) });
       alert("Sent!"); setDraft(""); setReplyInstructions(""); setSelectedEmail(null);
     } catch (e) { alert("Failed to send."); }
   };
@@ -237,63 +266,141 @@ export default function Home() {
 
   const pc = (p) => p === "high" ? "#ef4444" : p === "medium" ? "#f59e0b" : "#22c55e";
 
-  // Reply action screen
-  if (selectedReply) {
-    return (
-      <Screen>
-        <div style={{ padding: "16px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e1e2e" }}>
-          <button onClick={() => { setSelectedReply(null); setReplyText(""); }} style={{ background: "none", border: "none", color: "#6366f1", fontSize: 14, cursor: "pointer" }}>← Back</button>
-          <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>Reply needed</span>
-          <div style={{ width: 60 }} />
-        </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 120px" }}>
-          <Card style={{ marginBottom: 16 }}>
-            <div style={{ color: "#fff", fontWeight: 600, marginBottom: 4 }}>{selectedReply.subject}</div>
-            <div style={{ color: "#888", fontSize: 13, marginBottom: 12 }}>{selectedReply.from}</div>
-            <div style={{ color: "#aaa", fontSize: 14, lineHeight: 1.6 }}>{selectedReply.snippet}</div>
-          </Card>
-
-          <Card style={{ marginBottom: 12 }}>
-            <Label>SEND A REPLY</Label>
-            <textarea
-              value={replyText}
-              onChange={e => setReplyText(e.target.value)}
-              placeholder="What would you like to say? Nexus will draft and send it for you."
-              rows={5}
-              style={{ ...inputStyle, resize: "vertical" }}
-            />
-            <Btn onClick={() => handleReplyAction("send")} disabled={replySending || !replyText.trim()} style={{ background: "#22c55e" }}>
-              {replySending ? "Sending..." : "✓ Draft & Send"}
-            </Btn>
-          </Card>
-
-          <Card>
-            <Label>OR MARK AS</Label>
-            <div onClick={() => handleReplyAction("sent_from_outlook")}
-              style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 0", borderBottom: "1px solid #1e1e2e", cursor: "pointer" }}>
-              <div style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid #6366f1", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <span style={{ color: "#6366f1", fontSize: 14 }}>✓</span>
+  // Settings screen
+  if (showSettings) return (
+    <Screen>
+      <div style={{ padding: "16px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e1e2e" }}>
+        <button onClick={() => setShowSettings(false)} style={{ background: "none", border: "none", color: "#6366f1", fontSize: 14, cursor: "pointer" }}>← Back</button>
+        <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>Settings</span>
+        <div style={{ width: 60 }} />
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 40px" }}>
+        <Card style={{ marginBottom: 16 }}>
+          <Label>EMAIL SIGNATURE</Label>
+          <p style={{ color: "#666", fontSize: 13, marginBottom: 12 }}>Toggle lines on/off. Drag to reorder. These appear at the bottom of every sent email.</p>
+          {signatureLines.map((line, idx) => (
+            <div key={line.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #1e1e2e" }}>
+              <button onClick={() => setSignatureLines(ls => ls.map(l => l.id === line.id ? { ...l, enabled: !l.enabled } : l))}
+                style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid " + (line.enabled ? "#6366f1" : "#333"), background: line.enabled ? "#6366f1" : "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {line.enabled && <span style={{ color: "#fff", fontSize: 12 }}>✓</span>}
+              </button>
+              <span style={{ flex: 1, color: line.enabled ? "#e0e0e0" : "#555", fontSize: 14 }}>{line.text}</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <button onClick={() => { if (idx === 0) return; setSignatureLines(ls => { const n = [...ls]; [n[idx-1], n[idx]] = [n[idx], n[idx-1]]; return n; }); }}
+                  style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 12, padding: "2px 4px" }}>▲</button>
+                <button onClick={() => { if (idx === signatureLines.length - 1) return; setSignatureLines(ls => { const n = [...ls]; [n[idx], n[idx+1]] = [n[idx+1], n[idx]]; return n; }); }}
+                  style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 12, padding: "2px 4px" }}>▼</button>
               </div>
-              <div>
-                <div style={{ color: "#e0e0e0", fontSize: 14 }}>Already replied from Outlook</div>
-                <div style={{ color: "#666", fontSize: 12 }}>Removes from queue</div>
-              </div>
+              <button onClick={() => setSignatureLines(ls => ls.filter(l => l.id !== line.id))}
+                style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 18 }}>×</button>
             </div>
-            <div onClick={() => handleReplyAction("delete")}
-              style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 0", cursor: "pointer" }}>
-              <div style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid #ef4444", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <span style={{ color: "#ef4444", fontSize: 14 }}>🗑</span>
+          ))}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <input value={newSigLine} onChange={e => setNewSigLine(e.target.value)} onKeyDown={e => e.key === "Enter" && newSigLine.trim() && (setSignatureLines(ls => [...ls, { id: Date.now(), text: newSigLine, enabled: true }]), setNewSigLine(""))}
+              placeholder="Add signature line..." style={{ ...inputStyle, flex: 1, margin: 0 }} />
+            <Btn onClick={() => { if (!newSigLine.trim()) return; setSignatureLines(ls => [...ls, { id: Date.now(), text: newSigLine, enabled: true }]); setNewSigLine(""); }}
+              style={{ flexShrink: 0, width: "auto", padding: "10px 16px" }}>Add</Btn>
+          </div>
+        </Card>
+        <Card>
+          <Label>PREVIEW</Label>
+          <div style={{ color: "#aaa", fontSize: 13, fontFamily: "Times New Roman, serif", lineHeight: 1.8, whiteSpace: "pre-line" }}>
+            {signatureLines.filter(l => l.enabled).map(l => l.text).join("\n") || "(no signature lines enabled)"}
+          </div>
+        </Card>
+      </div>
+    </Screen>
+  );
+
+  // Draft preview screen
+  if (draftPreview) return (
+    <Screen>
+      <div style={{ padding: "16px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e1e2e" }}>
+        <button onClick={() => setDraftPreview(null)} style={{ background: "none", border: "none", color: "#6366f1", fontSize: 14, cursor: "pointer" }}>← Edit</button>
+        <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>Review draft</span>
+        <div style={{ width: 60 }} />
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 120px" }}>
+        <Card style={{ marginBottom: 16 }}>
+          <Label>TO</Label>
+          <div style={{ color: "#e0e0e0", fontSize: 14, marginBottom: 12 }}>{selectedReply?.from}</div>
+          <Label>SUBJECT</Label>
+          <div style={{ color: "#e0e0e0", fontSize: 14, marginBottom: 12 }}>Re: {selectedReply?.subject}</div>
+          <Label>BODY</Label>
+          <textarea value={draftPreview.body} onChange={e => setDraftPreview(d => ({ ...d, body: e.target.value }))}
+            rows={8} style={{ ...inputStyle, resize: "vertical", fontFamily: "Times New Roman, serif", fontSize: 14 }} />
+        </Card>
+        <Card>
+          <Label>SIGNATURE LINES</Label>
+          <p style={{ color: "#666", fontSize: 12, marginBottom: 12 }}>Toggle which lines to include in this email.</p>
+          {draftPreview.sigLines.map(line => (
+            <div key={line.id} onClick={() => setDraftPreview(d => ({ ...d, sigLines: d.sigLines.map(l => l.id === line.id ? { ...l, enabled: !l.enabled } : l) }))}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #1e1e2e", cursor: "pointer" }}>
+              <div style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid " + (line.enabled ? "#6366f1" : "#333"), background: line.enabled ? "#6366f1" : "none", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {line.enabled && <span style={{ color: "#fff", fontSize: 12 }}>✓</span>}
               </div>
-              <div>
-                <div style={{ color: "#e0e0e0", fontSize: 14 }}>Mark for deletion</div>
-                <div style={{ color: "#666", fontSize: 12 }}>Trashes in Gmail + notifies Outlook inboxes</div>
-              </div>
+              <span style={{ color: line.enabled ? "#e0e0e0" : "#555", fontSize: 14, fontFamily: "Times New Roman, serif" }}>{line.text}</span>
             </div>
-          </Card>
-        </div>
-      </Screen>
-    );
-  }
+          ))}
+        </Card>
+      </div>
+      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "12px 16px 32px", background: "#0d0d1a", borderTop: "1px solid #1e1e2e" }}>
+        <Btn onClick={sendDraft} disabled={sendLoading} style={{ background: "#22c55e" }}>
+          {sendLoading ? "Sending..." : "Send email"}
+        </Btn>
+      </div>
+    </Screen>
+  );
+
+  // Reply queue action screen
+  if (selectedReply) return (
+    <Screen>
+      <div style={{ padding: "16px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e1e2e" }}>
+        <button onClick={() => { setSelectedReply(null); setReplyIntent(""); setDraftPreview(null); }} style={{ background: "none", border: "none", color: "#6366f1", fontSize: 14, cursor: "pointer" }}>← Back</button>
+        <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>Reply needed</span>
+        <div style={{ width: 60 }} />
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 120px" }}>
+        <Card style={{ marginBottom: 16 }}>
+          <div style={{ color: "#fff", fontWeight: 600, marginBottom: 4 }}>{selectedReply.subject}</div>
+          <div style={{ color: "#888", fontSize: 13, marginBottom: 12 }}>{selectedReply.from}</div>
+          <div style={{ color: "#aaa", fontSize: 14, lineHeight: 1.6 }}>{selectedReply.snippet}</div>
+        </Card>
+        <Card style={{ marginBottom: 12 }}>
+          <Label>WHAT DO YOU WANT TO SAY?</Label>
+          <textarea value={replyIntent} onChange={e => setReplyIntent(e.target.value)}
+            placeholder="e.g. I can do Tuesday and Wednesday after 3pm"
+            rows={4} style={{ ...inputStyle, resize: "vertical" }} />
+          <Btn onClick={generateDraft} disabled={draftLoading || !replyIntent.trim()}>
+            {draftLoading ? "Drafting..." : "✦ Draft reply"}
+          </Btn>
+        </Card>
+        <Card>
+          <Label>OR MARK AS</Label>
+          <div onClick={() => handleReplyAction("sent_from_outlook")}
+            style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 0", borderBottom: "1px solid #1e1e2e", cursor: "pointer" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid #6366f1", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <span style={{ color: "#6366f1", fontSize: 14 }}>✓</span>
+            </div>
+            <div>
+              <div style={{ color: "#e0e0e0", fontSize: 14 }}>Already replied from Outlook</div>
+              <div style={{ color: "#666", fontSize: 12 }}>Removes from queue</div>
+            </div>
+          </div>
+          <div onClick={() => handleReplyAction("delete")}
+            style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 0", cursor: "pointer" }}>
+            <div style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid #ef4444", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <span style={{ color: "#ef4444", fontSize: 14 }}>🗑</span>
+            </div>
+            <div>
+              <div style={{ color: "#e0e0e0", fontSize: 14 }}>Mark for deletion</div>
+              <div style={{ color: "#666", fontSize: 12 }}>Trashes in Gmail + notifies Outlook</div>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </Screen>
+  );
 
   // Delete review modal
   if (deleteMode) {
@@ -338,7 +445,7 @@ export default function Home() {
           <span style={{ fontSize: 22 }}>⚡</span>
           <span style={{ fontWeight: 700, fontSize: 18, color: "#fff" }}>Nexus</span>
         </div>
-        <button onClick={() => signOut()} style={{ background: "none", border: "1px solid #333", color: "#888", borderRadius: 8, padding: "4px 12px", fontSize: 13, cursor: "pointer" }}>Sign out</button>
+        <button onClick={() => setShowSettings(true)} style={{ background: "none", border: "1px solid #333", color: "#888", borderRadius: 8, padding: "4px 12px", fontSize: 13, cursor: "pointer" }}>⚙ Settings</button>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 80px" }}>
@@ -348,7 +455,7 @@ export default function Home() {
             <h2 style={{ color: "#fff", fontSize: 22, fontWeight: 700, marginBottom: 16 }}>Overview</h2>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
               <Card><Label>EMAILS</Label><Big>{emailLoading ? "…" : emails.length}</Big><Sub>{scanning ? "scanning..." : "in inbox"}</Sub></Card>
-              <Card><Label>REPLIES NEEDED</Label><Big>{replyQueue.length}</Big><Sub>tap to action</Sub></Card>
+              <Card onClick={() => replyQueue.length && setTab("Email")}><Label>REPLIES NEEDED</Label><Big style={{ color: replyQueue.length ? "#6366f1" : "#fff" }}>{replyQueue.length}</Big><Sub>tap to action</Sub></Card>
               <Card><Label>ACTION ITEMS</Label><Big>{tasks.filter(t => !t.done && t.priority === "high").length}</Big><Sub>{tasks.filter(t => !t.done).length} total open</Sub></Card>
               <Card><Label>CREDIT SCORE</Label><Big>{finance.creditScore || "—"}</Big><Sub>{finance.creditScore ? "on file" : "Enter in Finance"}</Sub></Card>
             </div>
@@ -395,7 +502,9 @@ export default function Home() {
 
         {tab === "Email" && (
           <div>
-            <h2 style={{ color: "#fff", fontSize: 22, fontWeight: 700, marginBottom: 16 }}>Email {emailLoading && <span style={{ fontSize: 14, color: "#666" }}>loading...</span>}</h2>
+            <h2 style={{ color: "#fff", fontSize: 22, fontWeight: 700, marginBottom: 16 }}>
+              Email {emailLoading && <span style={{ fontSize: 14, color: "#666" }}>loading...</span>}
+            </h2>
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
               <Btn onClick={loadEmails} disabled={emailLoading} style={{ flex: 1 }}>{emailLoading ? "Loading..." : "↻ Refresh"}</Btn>
               <Btn onClick={openDeleteReview} disabled={emailLoading || !emails.length} style={{ flex: 1, background: "#ef4444" }}>🗑 Clean up</Btn>
@@ -412,10 +521,10 @@ export default function Home() {
                 <Card>
                   <Label>DRAFT REPLY</Label>
                   <input value={replyInstructions} onChange={e => setReplyInstructions(e.target.value)} placeholder="e.g. Decline politely" style={inputStyle} />
-                  <Btn onClick={draftReply} disabled={summaryLoading} style={{ marginBottom: 8 }}>Draft with AI</Btn>
+                  <Btn onClick={draftEmailReply} disabled={summaryLoading} style={{ marginBottom: 8 }}>Draft with AI</Btn>
                   {draft && <>
-                    <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={6} style={{ ...inputStyle, resize: "vertical" }} />
-                    <Btn onClick={sendReply} style={{ background: "#22c55e" }}>Send reply</Btn>
+                    <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={6} style={{ ...inputStyle, resize: "vertical", fontFamily: "Times New Roman, serif" }} />
+                    <Btn onClick={sendEmailReply} style={{ background: "#22c55e" }}>Send reply</Btn>
                   </>}
                 </Card>
               </div>
@@ -511,7 +620,7 @@ export default function Home() {
 const Screen = ({ children }) => <div style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", flexDirection: "column" }}>{children}</div>;
 const Card = ({ children, style, onClick }) => <div onClick={onClick} style={{ background: "#111120", borderRadius: 16, padding: 16, ...style }}>{children}</div>;
 const Label = ({ children }) => <div style={{ color: "#555", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>{children}</div>;
-const Big = ({ children }) => <div style={{ color: "#fff", fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{children}</div>;
+const Big = ({ children, style }) => <div style={{ color: "#fff", fontSize: 32, fontWeight: 800, lineHeight: 1, ...style }}>{children}</div>;
 const Sub = ({ children }) => <div style={{ color: "#666", fontSize: 12, marginTop: 4 }}>{children}</div>;
 const Btn = ({ children, onClick, disabled, style }) => <button onClick={onClick} disabled={disabled} style={{ width: "100%", padding: "12px 16px", background: "#6366f1", color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.6 : 1, ...style }}>{children}</button>;
 const QuickAction = ({ children, onClick }) => <div onClick={onClick} style={{ padding: "12px 0", borderBottom: "1px solid #1e1e2e", color: "#e0e0e0", fontSize: 14, cursor: "pointer" }}>{children}</div>;
