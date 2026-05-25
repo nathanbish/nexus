@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   try {
     let emails = []
     if (session.provider === 'google') {
-      emails = await listEmails(session.accessToken, { maxResults: 100 })
+      emails = await listEmails(session.accessToken, { maxResults: 100, query: 'in:inbox' })
     } else if (session.provider === 'azure-ad') {
       emails = await listOutlookEmails(session.accessToken, { top: 100 })
     }
