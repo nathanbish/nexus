@@ -41,8 +41,17 @@ export default async function handler(req, res) {
 
   const { email, instructions, send, draftBody } = req.body
 
+  const cleanDraft = (text) => {
+    return text
+      .replace(/\*\*/g, '')
+      .replace(/^Subject:.*\n?/gim, '')
+      .replace(/^\s*\n/, '')
+      .trim()
+  }
+
   try {
-          const draft = draftBody !== undefined ? draftBody : await draftReply(email, instructions)
+          const rawDraft = draftBody !== undefined ? draftBody : await draftReply(email, instructions)
+    const draft = draftBody !== undefined ? rawDraft : cleanDraft(rawDraft)
 
     if (send) {
       const to = email.from.match(/<(.+)>/)?.[1] || email.from
