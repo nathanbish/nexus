@@ -147,7 +147,9 @@ export default function Home() {
       setReplyQueue(replyEmails.slice(0, 20));
 
       // AI junk flagging — red slivers
+      console.log("SCAN RESULT:", JSON.stringify({ needsReply: data.needsReply?.length, junk: data.junk?.length, junkSample: data.junk?.slice(0,2) }));
       const junkIds = (data.junk || []).map(j => emailList[j.index]?.id).filter(Boolean);
+      console.log("JUNK IDS:", junkIds);
       setAiJunkIds(junkIds);
     } catch (e) { console.error(e); }
     setScanning(false);
@@ -578,7 +580,7 @@ export default function Home() {
                   <div style={{ color: "#888", fontSize: 13, marginBottom: 8 }}>{selectedEmail.from}</div>
                   {summaryLoading ? <div style={{ color: "#888" }}>Thinking...</div> : summary ? <div style={{ color: "#e0e0e0", fontSize: 14, lineHeight: 1.6 }}>{summary}</div> : null}
                 </Card>
-                <Card>
+                <Card style={{ marginBottom: 12 }}>
                   <Label>DRAFT REPLY</Label>
                   <textarea value={replyInstructions} onChange={e => setReplyInstructions(e.target.value)} placeholder="e.g. Decline politely, say I'm available Tuesday or Wednesday after 3pm" rows={3} style={{ ...inputStyle, resize: "vertical" }} />
                   <Btn onClick={draftEmailReply} disabled={draftLoading} style={{ marginBottom: 8 }}>{draftLoading ? "Drafting..." : "✦ Draft with AI"}</Btn>
@@ -587,6 +589,37 @@ export default function Home() {
                     <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={8} style={{ ...inputStyle, resize: "vertical", fontFamily: "Times New Roman, serif", fontSize: 14 }} />
                     <Btn onClick={sendEmailReply} style={{ background: "#22c55e" }}>Send reply</Btn>
                   </>}
+                </Card>
+                <Card>
+                  <Label>CLUTTER</Label>
+                  <div onClick={async () => {
+                    await fetch("/api/email/dismiss", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messageId: selectedEmail.id }) });
+                    setEmails(es => es.filter(x => x.id !== selectedEmail.id));
+                    setAiJunkIds(ids => ids.filter(x => x !== selectedEmail.id));
+                    setSelectedEmail(null);
+                  }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 0", borderBottom: "1px solid #1e1e2e", cursor: "pointer" }}>
+                    <div style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid #888", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <span style={{ fontSize: 13 }}>–</span>
+                    </div>
+                    <div>
+                      <div style={{ color: "#e0e0e0", fontSize: 14 }}>Dismiss</div>
+                      <div style={{ color: "#666", fontSize: 12 }}>Hide from Nexus, keep in Gmail</div>
+                    </div>
+                  </div>
+                  <div onClick={async () => {
+                    await fetch("/api/email/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ emailIds: [selectedEmail.id], emails: [selectedEmail] }) });
+                    setEmails(es => es.filter(x => x.id !== selectedEmail.id));
+                    setAiJunkIds(ids => ids.filter(x => x !== selectedEmail.id));
+                    setSelectedEmail(null);
+                  }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 0", cursor: "pointer" }}>
+                    <div style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid #ef4444", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <span style={{ color: "#ef4444", fontSize: 13 }}>🗑</span>
+                    </div>
+                    <div>
+                      <div style={{ color: "#e0e0e0", fontSize: 14 }}>Delete</div>
+                      <div style={{ color: "#666", fontSize: 12 }}>Trash in Gmail + notify Outlook</div>
+                    </div>
+                  </div>
                 </Card>
               </div>
             ) : (
