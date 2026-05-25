@@ -101,23 +101,25 @@ export default function Home() {
   const autoScan = async (emailList) => {
     setScanning(true);
     try {
-      const res = await fetch("/api/email/scan", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emails: emailList.slice(0, 15) })
-      });
+      const res = await fetch("/api/email/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ emails: emailList }) });
       const data = await res.json();
-      const newTasks = (data.deadlines || []).map((d, i) => ({
-        id: Date.now() + i, text: d.title, category: "Email", priority: "high", done: false, date: d.date
+      const items = data.items || [];
+      const actionTasks = items.filter(i => i.type === "deadline" || i.type === "meeting").map(i => ({
+        id: Date.now() + Math.random(), text: i.title || i.description, category: i.type === "meeting" ? "Meeting" : "Deadline",
+        priority: "high", done: false, date: i.date
       }));
-      if (newTasks.length > 0) setTasks(t => [...newTasks, ...t.filter(x => x.category !== "Email")]);
+      if (actionTasks.length) setTasks(t => {
+        const existing = new Set(t.map(x => x.text));
+        return [...t, ...actionTasks.filter(a => !existing.has(a.text))];
+      });
       const needsReply = emailList.filter(e => {
-        if (isJunk(e)) return false;
-        const snippet = (e.snippet || "").toLowerCase();
-        const subject = (e.subject || "").toLowerCase();
-        const signals = ["can you", "could you", "please", "let me know", "thoughts?", "feedback", "review", "confirm", "available", "when can", "follow up", "response needed", "action required", "rsvp", "your input", "?"];
-        return signals.some(s => snippet.includes(s) || subject.includes(s));
-      }).slice(0, 10);
-      setReplyQueue(needsReply);
+        const from = (e.from || "").toLowerCase();
+        const subj = (e.subject || "").toLowerCase();
+        return !from.includes("noreply") && !from.includes("no-reply") && !from.includes("donotreply") &&
+          !subj.includes("receipt") && !subj.includes("confirmation") && !subj.includes("newsletter") &&
+          (subj.includes("?") || subj.includes("request") || subj.includes("invite") || subj.includes("follow up") || subj.includes("following up") || subj.includes("can you") || subj.includes("could you") || subj.includes("please"));
+      });
+      setReplyQueue(needsReply.slice(0, 10));
     } catch (e) { console.error(e); }
     setScanning(false);
   };
@@ -129,13 +131,11 @@ export default function Home() {
   };
 
   const confirmDelete = async () => {
-    if (!toDelete.length) { setDeleteMode(false); return; }
     setDeleteLoading(true);
     try {
-      const emailsToDelete = emails.filter(e => toDelete.includes(e.id));
       await fetch("/api/email/delete", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emailIds: toDelete, emails: emailsToDelete })
+        body: JSON.stringify({ emailIds: toDelete, emails: emails.filter(e => toDelete.includes(e.id)) })
       });
       setEmails(e => e.filter(x => !toDelete.includes(x.id)));
       setReplyQueue(q => q.filter(x => !toDelete.includes(x.id)));
@@ -154,7 +154,10 @@ export default function Home() {
         body: JSON.stringify({ email: selectedReply, instructions: replyIntent })
       });
       const data = await res.json();
-        setDraftPreview({ body: data.draft || "", sigLines: signatureLines.map(l => ({ ...l })) });    } catch (e) { alert("Draft failed: " + e.message); }
+      if (data.error) throw new Error(data.error);
+      if (!data.draft) throw new Error("AI returned an empty draft — please try again");
+      setDraftPreview({ body: data.draft, sigLines: signatureLines.map(l => ({ ...l })) });
+    } catch (e) { alert("Draft failed: " + e.message); }
     setDraftLoading(false);
   };
 
@@ -203,14 +206,16 @@ export default function Home() {
   };
 
   const draftEmailReply = async () => {
-    if (!replyInstructions.trim()) return;
-    setSummaryLoading(true);
+    if (!replyInstructions.trim()) { alert("Please enter reply instructions first."); return; }
+    setDraftLoading(true);
     try {
       const res = await fetch("/api/email/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: selectedEmail, instructions: replyInstructions }) });
       const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (!data.draft) throw new Error("AI returned an empty draft — please try again");
       setDraft(data.draft);
-    } catch (e) { setDraft("Failed to draft reply."); }
-    setSummaryLoading(false);
+    } catch (e) { alert("Draft failed: " + e.message); setDraft(""); }
+    setDraftLoading(false);
   };
 
   const sendEmailReply = async () => {
@@ -338,7 +343,7 @@ export default function Home() {
               <div style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid " + (line.enabled ? "#6366f1" : "#333"), background: line.enabled ? "#6366f1" : "none", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {line.enabled && <span style={{ color: "#fff", fontSize: 12 }}>✓</span>}
               </div>
-              <span style={{ color: line.enabled ? "#e0e0e0" : "#555", fontSize: 14, fontFamily: "Times New Roman, serif" }}>{line.text}</span>
+              <span style={{ color: line.enabled ? "#e0e0e0" : "#555", fontSize: 14, fontFamily: "Times New Roman, serif" }}>{line.line}</span>
             </div>
           ))}
         </Card>
@@ -357,7 +362,7 @@ export default function Home() {
       <div style={{ padding: "16px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e1e2e" }}>
         <button onClick={() => { setSelectedReply(null); setReplyIntent(""); setDraftPreview(null); }} style={{ background: "none", border: "none", color: "#6366f1", fontSize: 14, cursor: "pointer" }}>← Back</button>
         <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>Reply needed</span>
-        <div style={{ width: 60 }} />
+        <button onClick={() => setShowSettings(true)} style={{ background: "none", border: "1px solid #333", color: "#888", borderRadius: 8, padding: "4px 12px", fontSize: 13, cursor: "pointer" }}>⚙</button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 120px" }}>
         <Card style={{ marginBottom: 16 }}>
@@ -511,7 +516,9 @@ export default function Home() {
             {scanning && <div style={{ color: "#6366f1", fontSize: 13, marginBottom: 12, textAlign: "center" }}>✦ Scanning for action items...</div>}
             {selectedEmail ? (
               <div>
-                <button onClick={() => setSelectedEmail(null)} style={{ background: "none", border: "none", color: "#6366f1", cursor: "pointer", marginBottom: 12, fontSize: 14 }}>← Back to inbox</button>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <button onClick={() => setSelectedEmail(null)} style={{ background: "none", border: "none", color: "#6366f1", cursor: "pointer", fontSize: 14 }}>← Back to inbox</button>
+                </div>
                 <Card style={{ marginBottom: 12 }}>
                   <div style={{ color: "#fff", fontWeight: 600, marginBottom: 4 }}>{selectedEmail.subject}</div>
                   <div style={{ color: "#888", fontSize: 13, marginBottom: 8 }}>{selectedEmail.from}</div>
@@ -519,10 +526,11 @@ export default function Home() {
                 </Card>
                 <Card>
                   <Label>DRAFT REPLY</Label>
-                  <input value={replyInstructions} onChange={e => setReplyInstructions(e.target.value)} placeholder="e.g. Decline politely" style={inputStyle} />
-                  <Btn onClick={draftEmailReply} disabled={summaryLoading} style={{ marginBottom: 8 }}>Draft with AI</Btn>
+                  <textarea value={replyInstructions} onChange={e => setReplyInstructions(e.target.value)} placeholder="e.g. Decline politely, say I'm available Tuesday or Wednesday after 3pm" rows={3} style={{ ...inputStyle, resize: "vertical" }} />
+                  <Btn onClick={draftEmailReply} disabled={draftLoading} style={{ marginBottom: 8 }}>{draftLoading ? "Drafting..." : "✦ Draft with AI"}</Btn>
                   {draft && <>
-                    <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={6} style={{ ...inputStyle, resize: "vertical", fontFamily: "Times New Roman, serif" }} />
+                    <Label>EDIT DRAFT</Label>
+                    <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={8} style={{ ...inputStyle, resize: "vertical", fontFamily: "Times New Roman, serif", fontSize: 14 }} />
                     <Btn onClick={sendEmailReply} style={{ background: "#22c55e" }}>Send reply</Btn>
                   </>}
                 </Card>
