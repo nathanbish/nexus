@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '../auth/[...nextauth]'
+import { authOptions } from './auth/[...nextauth]'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
