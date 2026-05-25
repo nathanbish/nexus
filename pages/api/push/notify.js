@@ -32,7 +32,7 @@ export default async function handler(req, res) {
   for (const sub of subs) {
     try {
       const emails = sub.provider === "google"
-        ? await listEmails(sub.accessToken, 10)
+        ? await listEmails(sub.accessToken, { maxResults: 10, query: 'in:inbox is:unread' })
         : await listOutlookEmails(sub.accessToken, 10);
       const newEmails = emails.filter(e => !seen.includes(e.id));
       if (newEmails.length > 0) {

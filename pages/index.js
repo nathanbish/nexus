@@ -60,12 +60,30 @@ export default function Home() {
   const [sendLoading, setSendLoading] = useState(false);
   const [signatureLines, setSignatureLines] = useState(DEFAULT_SIGNATURE_LINES);
   const [newSigLine, setNewSigLine] = useState("");
+  const [aiJunkIds, setAiJunkIds] = useState([]);
   const [replyInstructions, setReplyInstructions] = useState("");
   const [draft, setDraft] = useState("");
   const chatEndRef = useRef(null);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
   useEffect(() => { if (session) loadEmails(); }, [session]);
+  useEffect(() => {
+    if (!session) return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    navigator.serviceWorker.register("/sw.js").then(async reg => {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") return;
+      const existing = await reg.pushManager.getSubscription();
+      const sub = existing || await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+      });
+      await fetch("/api/push/subscribe", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: sub })
+      });
+    }).catch(console.error);
+  }, [session]);
 
   if (status === "loading") return <Screen><p style={{ color: "#888", textAlign: "center", marginTop: 80 }}>Loading...</p></Screen>;
   if (!session) return (
@@ -539,7 +557,7 @@ export default function Home() {
               <div>
                 {emails.length === 0 && !emailLoading && <div style={{ color: "#888", textAlign: "center", marginTop: 40 }}>No emails found</div>}
                 {emails.map(e => (
-                  <Card key={e.id} onClick={() => summarize(e)} style={{ marginBottom: 8, cursor: "pointer", borderLeft: replyQueue.find(r => r.id === e.id) ? "3px solid #6366f1" : isJunk(e) ? "3px solid #333" : "3px solid transparent" }}>
+                  <Card key={e.id} onClick={() => summarize(e)} style={{ marginBottom: 8, cursor: "pointer", borderLeft: replyQueue.find(r => r.id === e.id) ? "3px solid #6366f1" : (aiJunkIds.includes(e.id) && !toDelete.includes(e.id)) ? "3px solid #ef4444" : isJunk(e) ? "3px solid #333" : "3px solid transparent" }}>
                     <div style={{ color: "#fff", fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{e.subject || "(no subject)"}</div>
                     <div style={{ color: "#888", fontSize: 12, marginBottom: 4 }}>{e.from}</div>
                     <div style={{ color: "#aaa", fontSize: 13 }}>{e.snippet?.slice(0, 100)}...</div>

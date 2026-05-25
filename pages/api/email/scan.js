@@ -8,7 +8,7 @@ export default async function handler(req, res) {
 
   try {
     const { emails } = req.body
-    if (!emails || !emails.length) return res.json({ items: [], needsReply: [] })
+    if (!emails || !emails.length) return res.json({ items: [], needsReply: [], junk: [] })
 
     const result = await scanEmails(emails)
     res.json(result)
