@@ -42,7 +42,7 @@ export default async function handler(req, res) {
   const { email, instructions, send, draftBody } = req.body
 
   try {
-    const draft = draftBody || await draftReply(email, instructions)
+          const draft = draftBody !== undefined ? draftBody : await draftReply(email, instructions)
 
     if (send) {
       const to = email.from.match(/<(.+)>/)?.[1] || email.from
