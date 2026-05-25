@@ -54,7 +54,7 @@ export default function Home() {
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 24 }}>
         <div style={{ fontSize: 56, marginBottom: 16 }}>⚡</div>
         <h1 style={{ fontSize: 32, fontWeight: 800, marginBottom: 8, color: "#fff" }}>Nexus</h1>
-        <p style={{ color: "#888", marginBottom: 48, textAlign: "center" }}>Your personal command center</p>
+        <p style={{ color: "#888", marginBottom: 48, textAlign: "center" }}>UPDATED VERSION 2.0</p>
         <Btn onClick={() => signIn("google")} style={{ background: "#4285f4", width: "100%", maxWidth: 320, marginBottom: 12 }}>Continue with Gmail</Btn>
         <Btn onClick={() => signIn("azure-ad")} style={{ background: "#0078d4", width: "100%", maxWidth: 320 }}>Continue with Outlook</Btn>
       </div>
