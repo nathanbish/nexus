@@ -61,6 +61,7 @@ export default function Home() {
   const [signatureLines, setSignatureLines] = useState(DEFAULT_SIGNATURE_LINES);
   const [newSigLine, setNewSigLine] = useState("");
   const [aiJunkIds, setAiJunkIds] = useState([]);
+  const [darkMode, setDarkMode] = useState(true);
   const [replyInstructions, setReplyInstructions] = useState("");
   const [draft, setDraft] = useState("");
   const chatEndRef = useRef(null);
@@ -98,6 +99,16 @@ export default function Home() {
     </Screen>
   );
 
+  const theme = {
+    bg: darkMode ? "#0a0a0f" : "#f0f0f5",
+    card: darkMode ? "#111120" : "#ffffff",
+    border: darkMode ? "#1e1e2e" : "#e0e0e8",
+    text: darkMode ? "#e0e0e0" : "#111111",
+    sub: darkMode ? "#888" : "#555",
+    muted: darkMode ? "#555" : "#999",
+    header: darkMode ? "#0d0d1a" : "#ffffff",
+  };
+
   const buildSignature = (lines) => {
     const enabled = lines.filter(l => l.enabled).map(l => l.text);
     if (!enabled.length) return "";
@@ -130,14 +141,14 @@ export default function Home() {
         const existing = new Set(t.map(x => x.text));
         return [...t, ...actionTasks.filter(a => !existing.has(a.text))];
       });
-      const needsReply = emailList.filter(e => {
-        const from = (e.from || "").toLowerCase();
-        const subj = (e.subject || "").toLowerCase();
-        return !from.includes("noreply") && !from.includes("no-reply") && !from.includes("donotreply") &&
-          !subj.includes("receipt") && !subj.includes("confirmation") && !subj.includes("newsletter") &&
-          (subj.includes("?") || subj.includes("request") || subj.includes("invite") || subj.includes("follow up") || subj.includes("following up") || subj.includes("can you") || subj.includes("could you") || subj.includes("please"));
-      });
-      setReplyQueue(needsReply.slice(0, 10));
+      // Reply queue — Claude-detected
+      const needsReplyMeta = data.needsReply || [];
+      const replyEmails = needsReplyMeta.map(r => emailList[r.index]).filter(Boolean);
+      setReplyQueue(replyEmails.slice(0, 20));
+
+      // AI junk flagging — red slivers
+      const junkIds = (data.junk || []).map(j => emailList[j.index]?.id).filter(Boolean);
+      setAiJunkIds(junkIds);
     } catch (e) { console.error(e); }
     setScanning(false);
   };
@@ -290,46 +301,65 @@ export default function Home() {
 
   // Settings screen
   if (showSettings) return (
-    <Screen>
-      <div style={{ padding: "16px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e1e2e" }}>
+    <Screen bg={theme.bg}>
+      <div style={{ padding: "16px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid " + theme.border, background: theme.header }}>
         <button onClick={() => setShowSettings(false)} style={{ background: "none", border: "none", color: "#6366f1", fontSize: 14, cursor: "pointer" }}>← Back</button>
-        <span style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>Settings</span>
+        <span style={{ fontWeight: 700, fontSize: 16, color: theme.text }}>Settings</span>
         <div style={{ width: 60 }} />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 40px" }}>
-        <Card style={{ marginBottom: 16 }}>
+
+        <div style={{ background: theme.card, borderRadius: 16, padding: 16, marginBottom: 16 }}>
+          <Label>ACCOUNT</Label>
+          <div style={{ color: theme.sub, fontSize: 13, marginBottom: 12 }}>{session?.user?.email}</div>
+          <button onClick={() => signOut()} style={{ width: "100%", padding: "12px 16px", background: "#ef4444", color: "#fff", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>Sign out</button>
+        </div>
+
+        <div style={{ background: theme.card, borderRadius: 16, padding: 16, marginBottom: 16 }}>
+          <Label>APPEARANCE</Label>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ color: theme.text, fontSize: 14 }}>{darkMode ? "Dark mode" : "Light mode"}</span>
+            <div onClick={() => setDarkMode(d => !d)} style={{ width: 48, height: 28, borderRadius: 14, background: darkMode ? "#6366f1" : "#ccc", cursor: "pointer", position: "relative", transition: "background 0.2s" }}>
+              <div style={{ position: "absolute", top: 3, left: darkMode ? 23 : 3, width: 22, height: 22, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ background: theme.card, borderRadius: 16, padding: 16, marginBottom: 16 }}>
           <Label>EMAIL SIGNATURE</Label>
-          <p style={{ color: "#666", fontSize: 13, marginBottom: 12 }}>Toggle lines on/off. Drag to reorder. These appear at the bottom of every sent email.</p>
+          <p style={{ color: theme.muted, fontSize: 13, marginBottom: 12 }}>Toggle lines on/off. These appear at the bottom of every sent email.</p>
           {signatureLines.map((line, idx) => (
-            <div key={line.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #1e1e2e" }}>
+            <div key={line.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid " + theme.border }}>
               <button onClick={() => setSignatureLines(ls => ls.map(l => l.id === line.id ? { ...l, enabled: !l.enabled } : l))}
-                style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid " + (line.enabled ? "#6366f1" : "#333"), background: line.enabled ? "#6366f1" : "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid " + (line.enabled ? "#6366f1" : theme.border), background: line.enabled ? "#6366f1" : "none", cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {line.enabled && <span style={{ color: "#fff", fontSize: 12 }}>✓</span>}
               </button>
-              <span style={{ flex: 1, color: line.enabled ? "#e0e0e0" : "#555", fontSize: 14 }}>{line.text}</span>
+              <span style={{ flex: 1, color: line.enabled ? theme.text : theme.muted, fontSize: 14 }}>{line.text}</span>
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <button onClick={() => { if (idx === 0) return; setSignatureLines(ls => { const n = [...ls]; [n[idx-1], n[idx]] = [n[idx], n[idx-1]]; return n; }); }}
-                  style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 12, padding: "2px 4px" }}>▲</button>
+                  style={{ background: "none", border: "none", color: theme.muted, cursor: "pointer", fontSize: 12, padding: "2px 4px" }}>▲</button>
                 <button onClick={() => { if (idx === signatureLines.length - 1) return; setSignatureLines(ls => { const n = [...ls]; [n[idx], n[idx+1]] = [n[idx+1], n[idx]]; return n; }); }}
-                  style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 12, padding: "2px 4px" }}>▼</button>
+                  style={{ background: "none", border: "none", color: theme.muted, cursor: "pointer", fontSize: 12, padding: "2px 4px" }}>▼</button>
               </div>
               <button onClick={() => setSignatureLines(ls => ls.filter(l => l.id !== line.id))}
-                style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 18 }}>×</button>
+                style={{ background: "none", border: "none", color: theme.muted, cursor: "pointer", fontSize: 18 }}>×</button>
             </div>
           ))}
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
             <input value={newSigLine} onChange={e => setNewSigLine(e.target.value)} onKeyDown={e => e.key === "Enter" && newSigLine.trim() && (setSignatureLines(ls => [...ls, { id: Date.now(), text: newSigLine, enabled: true }]), setNewSigLine(""))}
-              placeholder="Add signature line..." style={{ ...inputStyle, flex: 1, margin: 0 }} />
+              placeholder="Add signature line..." style={{ ...inputStyle, flex: 1, margin: 0, background: theme.bg, color: theme.text, borderColor: theme.border }} />
             <Btn onClick={() => { if (!newSigLine.trim()) return; setSignatureLines(ls => [...ls, { id: Date.now(), text: newSigLine, enabled: true }]); setNewSigLine(""); }}
               style={{ flexShrink: 0, width: "auto", padding: "10px 16px" }}>Add</Btn>
           </div>
-        </Card>
-        <Card>
-          <Label>PREVIEW</Label>
-          <div style={{ color: "#aaa", fontSize: 13, fontFamily: "Times New Roman, serif", lineHeight: 1.8, whiteSpace: "pre-line" }}>
+        </div>
+
+        <div style={{ background: theme.card, borderRadius: 16, padding: 16 }}>
+          <Label>SIGNATURE PREVIEW</Label>
+          <div style={{ color: theme.sub, fontSize: 13, fontFamily: "Times New Roman, serif", lineHeight: 1.8, whiteSpace: "pre-line" }}>
             {signatureLines.filter(l => l.enabled).map(l => l.text).join("\n") || "(no signature lines enabled)"}
           </div>
-        </Card>
+        </div>
+
       </div>
     </Screen>
   );
@@ -642,7 +672,7 @@ export default function Home() {
   );
 }
 
-const Screen = ({ children }) => <div style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", flexDirection: "column" }}>{children}</div>;
+const Screen = ({ children, bg }) => <div style={{ minHeight: "100vh", background: bg || "#0a0a0f", display: "flex", flexDirection: "column" }}>{children}</div>;
 const Card = ({ children, style, onClick }) => <div onClick={onClick} style={{ background: "#111120", borderRadius: 16, padding: 16, ...style }}>{children}</div>;
 const Label = ({ children }) => <div style={{ color: "#555", fontSize: 11, fontWeight: 700, letterSpacing: 1, marginBottom: 10 }}>{children}</div>;
 const Big = ({ children, style }) => <div style={{ color: "#fff", fontSize: 32, fontWeight: 800, lineHeight: 1, ...style }}>{children}</div>;
