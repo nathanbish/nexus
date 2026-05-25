@@ -154,8 +154,7 @@ export default function Home() {
         body: JSON.stringify({ email: selectedReply, instructions: replyIntent })
       });
       const data = await res.json();
-      setDraftPreview({ body: data.draft, sigLines: signatureLines.map(l => ({ ...l })) });
-    } catch (e) { alert("Draft failed: " + e.message); }
+        setDraftPreview({ body: data.draft || "", sigLines: signatureLines.map(l => ({ ...l })) });    } catch (e) { alert("Draft failed: " + e.message); }
     setDraftLoading(false);
   };
 
