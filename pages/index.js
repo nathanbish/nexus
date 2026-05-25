@@ -566,6 +566,12 @@ export default function Home() {
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <button onClick={() => setSelectedEmail(null)} style={{ background: "none", border: "none", color: "#6366f1", cursor: "pointer", fontSize: 14 }}>← Back to inbox</button>
+                  <button onClick={async () => {
+                    await fetch("/api/email/dismiss", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messageId: selectedEmail.id }) });
+                    setEmails(es => es.filter(x => x.id !== selectedEmail.id));
+                    setAiJunkIds(ids => ids.filter(x => x !== selectedEmail.id));
+                    setSelectedEmail(null);
+                  }} style={{ background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 13 }}>dismiss ✕</button>
                 </div>
                 <Card style={{ marginBottom: 12 }}>
                   <div style={{ color: "#fff", fontWeight: 600, marginBottom: 4 }}>{selectedEmail.subject}</div>
@@ -587,7 +593,7 @@ export default function Home() {
               <div>
                 {emails.length === 0 && !emailLoading && <div style={{ color: "#888", textAlign: "center", marginTop: 40 }}>No emails found</div>}
                 {emails.map(e => (
-                  <Card key={e.id} onClick={() => summarize(e)} style={{ marginBottom: 8, cursor: "pointer", borderLeft: replyQueue.find(r => r.id === e.id) ? "3px solid #6366f1" : (aiJunkIds.includes(e.id) && !toDelete.includes(e.id)) ? "3px solid #ef4444" : isJunk(e) ? "3px solid #333" : "3px solid transparent" }}>
+                  <Card key={e.id} onClick={() => summarize(e)} style={{ marginBottom: 8, cursor: "pointer", border: (aiJunkIds.includes(e.id) && !toDelete.includes(e.id)) ? "2px solid #ef4444" : replyQueue.find(r => r.id === e.id) ? "2px solid #6366f1" : "2px solid transparent" }}>
                     <div style={{ color: "#fff", fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{e.subject || "(no subject)"}</div>
                     <div style={{ color: "#888", fontSize: 12, marginBottom: 4 }}>{e.from}</div>
                     <div style={{ color: "#aaa", fontSize: 13 }}>{e.snippet?.slice(0, 100)}...</div>
