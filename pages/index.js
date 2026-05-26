@@ -50,6 +50,7 @@ export default function Home() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
+  const [clutterMap, setClutterMap] = useState({});
   const [toDelete, setToDelete] = useState([]);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -146,33 +147,64 @@ export default function Home() {
       const replyEmails = needsReplyMeta.map(r => emailList[r.index]).filter(Boolean);
       setReplyQueue(replyEmails.slice(0, 20));
 
-      // AI junk flagging — red slivers
+      // AI junk flagging — red outline
       console.log("SCAN RESULT:", JSON.stringify({ needsReply: data.needsReply?.length, junk: data.junk?.length, junkSample: data.junk?.slice(0,2) }));
       const junkIds = (data.junk || []).map(j => emailList[j.index]?.id).filter(Boolean);
       console.log("JUNK IDS:", junkIds);
       setAiJunkIds(junkIds);
+
+      // Build clutter map: every non-actionable email is clutter
+      const actionableIds = new Set([
+        ...needsReplyMeta.map(r => emailList[r.index]?.id).filter(Boolean),
+      ]);
+      const newClutterMap = {};
+      emailList.forEach(e => {
+        if (!actionableIds.has(e.id)) {
+          newClutterMap[e.id] = {
+            mode: junkIds.includes(e.id) ? 'junk' : 'save',
+            checked: true,
+          };
+        }
+      });
+      setClutterMap(newClutterMap);
     } catch (e) { console.error(e); }
     setScanning(false);
   };
 
   const openDeleteReview = () => {
-    const junk = emails.filter(isJunk);
-    setToDelete(junk.map(e => e.id));
     setDeleteMode(true);
   };
 
-  const confirmDelete = async () => {
+  const confirmDeclutter = async () => {
     setDeleteLoading(true);
+    const checkedIds = Object.entries(clutterMap)
+      .filter(([, v]) => v.checked)
+      .map(([id]) => id);
+    const toJunk = checkedIds.filter(id => clutterMap[id].mode === 'junk');
+    const toSave = checkedIds.filter(id => clutterMap[id].mode === 'save');
     try {
-      await fetch("/api/email/delete", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emailIds: toDelete, emails: emails.filter(e => toDelete.includes(e.id)) })
+      if (toJunk.length) {
+        await fetch("/api/email/delete", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emailIds: toJunk, emails: emails.filter(e => toJunk.includes(e.id)) })
+        });
+      }
+      for (const id of toSave) {
+        await fetch("/api/email/dismiss", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messageId: id })
+        });
+      }
+      setEmails(e => e.filter(x => !checkedIds.includes(x.id)));
+      setReplyQueue(q => q.filter(x => !checkedIds.includes(x.id)));
+      setAiJunkIds(ids => ids.filter(x => !checkedIds.includes(x)));
+      setClutterMap(m => {
+        const next = { ...m };
+        checkedIds.forEach(id => delete next[id]);
+        return next;
       });
-      setEmails(e => e.filter(x => !toDelete.includes(x.id)));
-      setReplyQueue(q => q.filter(x => !toDelete.includes(x.id)));
       setDeleteMode(false);
-      setToDelete([]);
-    } catch (e) { alert("Delete failed: " + e.message); }
+    } catch (e) { alert("Declutter failed: " + e.message); }
     setDeleteLoading(false);
   };
 
@@ -456,36 +488,63 @@ export default function Home() {
     </Screen>
   );
 
-  // Delete review modal
+  // Declutter screen
   if (deleteMode) {
-    const junkEmails = emails.filter(isJunk);
+    const clutterEmails = emails.filter(e => clutterMap[e.id]);
+    const checkedCount = Object.values(clutterMap).filter(v => v.checked).length;
     return (
       <Screen>
         <div style={{ padding: "16px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e1e2e" }}>
-          <span style={{ fontWeight: 700, fontSize: 18, color: "#fff" }}>Review for deletion</span>
+          <span style={{ fontWeight: 700, fontSize: 18, color: "#fff" }}>Declutter</span>
           <button onClick={() => setDeleteMode(false)} style={{ background: "none", border: "none", color: "#888", fontSize: 24, cursor: "pointer" }}>×</button>
         </div>
-        <div style={{ padding: "12px 16px", background: "#1a1a2e", borderBottom: "1px solid #1e1e2e" }}>
-          <p style={{ color: "#aaa", fontSize: 13 }}>{toDelete.length} of {junkEmails.length} selected. Uncheck any to keep.</p>
+        <div style={{ padding: "10px 16px", background: "#1a1a2e", borderBottom: "1px solid #1e1e2e", display: "flex", gap: 16 }}>
+          <span style={{ color: "#aaa", fontSize: 12 }}>🔴 Junk = delete &nbsp; 🟢 Save = hide from Nexus</span>
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px 120px" }}>
-          {junkEmails.map(e => (
-            <div key={e.id} onClick={() => setToDelete(ids => ids.includes(e.id) ? ids.filter(x => x !== e.id) : [...ids, e.id])}
-              style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 0", borderBottom: "1px solid #1e1e2e", cursor: "pointer" }}>
-              <div style={{ width: 22, height: 22, borderRadius: 6, border: "2px solid " + (toDelete.includes(e.id) ? "#ef4444" : "#333"), background: toDelete.includes(e.id) ? "#ef4444" : "none", flexShrink: 0, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {toDelete.includes(e.id) && <span style={{ color: "#fff", fontSize: 14 }}>✓</span>}
+        <div style={{ padding: "8px 16px 6px", background: "#1a1a2e", borderBottom: "1px solid #1e1e2e" }}>
+          <p style={{ color: "#aaa", fontSize: 12 }}>{checkedCount} selected · Uncheck to make actionable</p>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "4px 16px 120px" }}>
+          {clutterEmails.length === 0 && (
+            <div style={{ color: "#555", textAlign: "center", marginTop: 60 }}>No clutter detected yet — refresh inbox to scan</div>
+          )}
+          {clutterEmails.map(e => {
+            const entry = clutterMap[e.id] || { mode: "junk", checked: true };
+            const isJunkMode = entry.mode === "junk";
+            const color = isJunkMode ? "#ef4444" : "#22c55e";
+            return (
+              <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid #1e1e2e" }}>
+                {/* Checkbox — uncheck to make actionable */}
+                <div onClick={() => {
+                  if (entry.checked) {
+                    // unchecking — make actionable, add as task
+                    setClutterMap(m => ({ ...m, [e.id]: { ...m[e.id], checked: false } }));
+                    setTasks(ts => [...ts, { id: Date.now() + Math.random(), text: e.subject || "(no subject)", category: "Email", priority: "medium", done: false }]);
+                  } else {
+                    setClutterMap(m => ({ ...m, [e.id]: { ...m[e.id], checked: true } }));
+                    setTasks(ts => ts.filter(t => t.text !== e.subject));
+                  }
+                }} style={{ width: 24, height: 24, borderRadius: 6, border: "2px solid " + (entry.checked ? color : "#444"), background: entry.checked ? color : "none", flexShrink: 0, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {entry.checked && <span style={{ color: "#fff", fontSize: 13 }}>✓</span>}
+                </div>
+                {/* Email info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: entry.checked ? "#e0e0e0" : "#555", fontSize: 13, fontWeight: 500, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.subject || "(no subject)"}</div>
+                  <div style={{ color: "#555", fontSize: 11 }}>{e.from?.split("<")[0].trim()}</div>
+                </div>
+                {/* Toggle: left=junk(red), right=save(green) */}
+                <div onClick={() => setClutterMap(m => ({ ...m, [e.id]: { ...m[e.id], mode: isJunkMode ? "save" : "junk" } }))}
+                  style={{ width: 44, height: 24, borderRadius: 12, background: isJunkMode ? "#ef444433" : "#22c55e33", border: "1.5px solid " + color, cursor: "pointer", position: "relative", flexShrink: 0, transition: "background 0.2s" }}>
+                  <div style={{ position: "absolute", top: 2, left: isJunkMode ? 2 : 20, width: 16, height: 16, borderRadius: "50%", background: color, transition: "left 0.15s" }} />
+                </div>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ color: "#e0e0e0", fontSize: 14, fontWeight: 500, marginBottom: 2 }}>{e.subject || "(no subject)"}</div>
-                <div style={{ color: "#666", fontSize: 12 }}>{e.from}</div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "12px 16px 32px", background: "#0d0d1a", borderTop: "1px solid #1e1e2e", display: "flex", gap: 8 }}>
           <Btn onClick={() => setDeleteMode(false)} style={{ background: "#333", flex: 1 }}>Cancel</Btn>
-          <Btn onClick={confirmDelete} disabled={deleteLoading || !toDelete.length} style={{ background: "#ef4444", flex: 2 }}>
-            {deleteLoading ? "Deleting..." : `Delete ${toDelete.length} emails`}
+          <Btn onClick={confirmDeclutter} disabled={deleteLoading || checkedCount === 0} style={{ background: "#6366f1", flex: 2 }}>
+            {deleteLoading ? "Processing..." : `Declutter ${checkedCount} emails`}
           </Btn>
         </div>
       </Screen>
